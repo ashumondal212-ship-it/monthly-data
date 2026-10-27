@@ -40,6 +40,17 @@ button.l{background:transparent;color:var(--ac);padding:6px 8px}
 .empty{color:var(--mu);text-align:center;padding:18px 0;font-size:14px}
 .err{color:var(--dg)}
 summary{cursor:pointer;font-weight:600}
+.tabs{display:flex;gap:8px;margin-bottom:12px}.tabs button{flex:1}
+.h{font-weight:600}
+.bar{height:8px;background:var(--bd);border-radius:4px;overflow:hidden;margin:4px 0 6px}
+.bar i{display:block;height:100%;background:var(--ac)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat b{display:block;font-size:18px}.stat span{font-size:12px;color:var(--mu)}
+.pos{color:var(--ac)}
+.pl{padding:10px 0;border-top:1px solid var(--bd)}.h+.pl{border-top:0}
+.tot2{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:600}
+.chip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--ac2);color:var(--ac)}
+.chip.bad{background:rgba(179,38,30,.14);color:var(--dg)}
 #login{max-width:380px;margin:12vh auto 0}
 </style>
 </head>
@@ -66,6 +77,9 @@ summary{cursor:pointer;font-weight:600}
       <div class="tot"><span>Total (as entered)</span><b id="total">0</b></div>
     </div>
 
+    <div class="tabs"><button id="t-data">Data</button><button id="t-upd" class="g">Update</button><button id="t-ana" class="g">Analysis</button></div>
+
+    <div id="v-data">
     <div class="card">
       <div style="font-weight:600">Import monthly Excel</div>
       <div class="n" style="margin:2px 0 8px">Upload the unit-wise plan file each month. Importing the same month again updates entries instead of duplicating them.</div>
@@ -97,6 +111,9 @@ summary{cursor:pointer;font-weight:600}
     </details>
 
     <div class="card"><div id="list"></div></div>
+    </div>
+    <div id="v-upd" style="display:none"></div>
+    <div id="v-ana" style="display:none"></div>
   </div>
 </main>
 
@@ -151,14 +168,14 @@ var FIREBASE_CONFIG = {
     $('login').style.display='none';$('app').style.display='';
     if(unsub)unsub();
     unsub=db.collection('entries').onSnapshot(function(snap){
-      rows=snap.docs.map(function(d){var o=d.data();o.id=d.id;o.value=Number(o.value)||0;return o});
+      rows=snap.docs.map(function(d){var o=d.data();o.id=d.id;o.value=Number(o.value)||0;o.done=(o.done==null||o.done==='')?null:Number(o.done);return o});
       if(first&&rows.length){first=false;var ms=rows.map(function(r){return r.month}).sort();$('mf').value=ms[ms.length-1]}
       setStatus(snap.metadata.fromCache?'Offline · changes will sync when online':'Live · syncing instantly',!snap.metadata.fromCache);
       render();
     },function(e){setStatus('Sync error ('+e.code+')',false)});
   });
 
-  function render(){
+  function renderData(){
     var m=$('mf').value;
     var pl={};rows.forEach(function(r){if(r.plant)pl[r.plant]=1});
     var sel=$('pf'),keep=sel.value;
@@ -174,7 +191,7 @@ var FIREBASE_CONFIG = {
     cur.forEach(function(r){
       var d=el('div','item'),a=el('div');
       a.appendChild(el('div',null,r.item||'(no name)'));
-      var bits=[];if(r.plant)bits.push(r.plant);if(r.cbb!=null)bits.push('CBB '+fmt(r.cbb));if(r.cost!=null)bits.push('₹'+fmt(r.cost)+'/kg');if(r.note)bits.push(r.note);
+      var bits=[];if(r.plant)bits.push(r.plant);if(r.cbb!=null)bits.push('CBB '+fmt(r.cbb));if(r.cost!=null)bits.push('₹'+fmt(r.cost)+'/kg');if(r.done!=null)bits.push('Produced '+fmt(r.done)+' t');if(r.note)bits.push(r.note);
       if(bits.length)a.appendChild(el('div','n',bits.join(' · ')));
       var b=el('div');b.style.textAlign='right';
       b.appendChild(el('div','v',fmt(r.value)+(r.unit?' '+r.unit:'')));
@@ -204,13 +221,202 @@ var FIREBASE_CONFIG = {
     if(!item||isNaN(val)){alert('Please enter an item and a value.');return}
     var d={month:$('mf').value,item:item,plant:$('plant').value.trim(),value:val,unit:$('unit').value.trim(),cbb:opt($('cbb').value),cost:opt($('cost').value),note:$('note').value.trim(),ts:Date.now()};
     var id=editId||slug(d.month+'_'+(d.plant||'na')+'_'+item);
-    db.collection('entries').doc(id).set(d).catch(function(e){alert('Could not save ('+e.code+').')});
+    db.collection('entries').doc(id).set(d,{merge:true}).catch(function(e){alert('Could not save ('+e.code+').')});
     reset();
   };
   function remove(r){
     if(!confirm('Delete "'+(r.item||'entry')+'"?'))return;
     db.collection('entries').doc(r.id).delete().catch(function(e){alert('Could not delete ('+e.code+').')});
   }
+
+  // ---- Tabs, update and analysis ----
+  var tab='data',dirty={},updMsg='',sc={plant:'',days:'',tons:''},AN=null,TABS=['data','upd','ana'];
+  TABS.forEach(function(t){$('t-'+t).onclick=function(){
+    tab=t;updMsg='';
+    TABS.forEach(function(x){$('v-'+x).style.display=x===t?'':'none';$('t-'+x).className=x===t?'':'g'});
+    render();
+  }});
+  function bar(p){var b=el('div','bar'),i=document.createElement('i');i.style.width=Math.max(0,Math.min(100,p))+'%';b.appendChild(i);return b}
+  function stat(l,v,c){var d=el('div','stat');d.appendChild(el('b',c||null,v));d.appendChild(el('span',null,l));return d}
+  function tInfo(m){
+    var p=m.split('-'),y=+p[0],mo=+p[1],D=new Date(y,mo,0).getDate(),t=new Date();
+    var pass=t<new Date(y,mo-1,1)?0:(t>=new Date(y,mo,1)?D:t.getDate());
+    return {D:D,pass:pass,left:D-pass};
+  }
+  function grp(cur,T){
+    var g={};
+    cur.forEach(function(r){
+      var cat=/rusk/i.test(r.item||'')?'Rusk':'Biscuit',k=cat+'|'+(r.plant||'');
+      var o=g[k]=g[k]||{key:k,plant:r.plant||'(no plant)',cat:cat,plan:0,done:0};
+      o.plan+=r.value;o.done+=(r.done||0);
+    });
+    return Object.keys(g).map(function(k){
+      var o=g[k];
+      o.rem=Math.max(o.plan-o.done,0);
+      o.rate=T.pass>0?o.done/T.pass:0;
+      o.base=o.rate>0?o.rate:o.plan/T.D;
+      o.proj=o.done+o.rate*T.left;
+      o.gap=o.plan-o.proj;
+      o.req=T.left>0?o.rem/T.left:(o.rem>0?Infinity:0);
+      return o;
+    });
+  }
+  function absorb(gs,ex,extra,T){
+    var oth=gs.filter(function(g){return !ex[g.key]}),tr=oth.reduce(function(s,g){return s+g.rem},0);
+    return oth.map(function(g){
+      var share=tr>0?extra*g.rem/tr:extra/oth.length;
+      var need=T.left>0?(g.rem+share)/T.left:null;
+      return {g:g,share:share,need:need,pct:(need!=null&&g.base>0)?(need/g.base-1)*100:null};
+    }).filter(function(x){return tr<=0||x.share>0.05});
+  }
+  function coverLines(list,T){
+    var d=el('div');
+    if(!list.length){d.appendChild(el('div','n','No other plant in this category to cover it.'));return d}
+    if(T.left<=0){d.appendChild(el('div','n err','No days left to recover this.'));return d}
+    list.forEach(function(x){
+      var t=x.g.plant+': +'+fmt(x.share)+' t more, so it needs '+fmt(x.need)+' t/day (now '+fmt(x.g.base)+' t/day'+(x.pct==null?'':', '+(x.pct>=0?'+':'')+Math.round(x.pct)+'%')+')';
+      d.appendChild(el('div',null,t));
+    });
+    return d;
+  }
+
+  function renderUpd(){
+    if(tab!=='upd')return;
+    var box=$('v-upd');box.textContent='';
+    var m=$('mf').value,p=$('pf').value;
+    var cur=rows.filter(function(r){return r.month===m&&(!p||r.plant===p)}).sort(function(a,b){return (a.plant||'').localeCompare(b.plant||'')||(a.item||'').localeCompare(b.item||'')});
+    var c=el('div','card');
+    c.appendChild(el('div','h','Update produced so far'));
+    c.appendChild(el('div','n','Enter the total tons produced this month up to today for each product, then tap Save. Use the plant filter above to shorten the list.'));
+    if(!cur.length){c.appendChild(el('div','empty','No entries for this selection.'));box.appendChild(c);return}
+    cur.forEach(function(r){
+      var d=el('div','item'),a=el('div');
+      a.appendChild(el('div',null,r.item||'(no name)'));
+      a.appendChild(el('div','n',(r.plant||'')+' · plan '+fmt(r.value)+' '+(r.unit||'')));
+      var i=document.createElement('input');i.type='number';i.step='any';i.inputMode='decimal';i.style.width='100px';
+      i.value=dirty[r.id]!==undefined?dirty[r.id]:(r.done==null?'':r.done);
+      i.oninput=function(){dirty[r.id]=i.value};
+      d.appendChild(a);d.appendChild(i);c.appendChild(d);
+    });
+    var msg=el('div','n',updMsg);msg.style.marginTop='8px';
+    var b=el('button',null,'Save updates');b.style.cssText='margin-top:12px;width:100%';
+    b.onclick=async function(){
+      var ids=Object.keys(dirty).filter(function(id){var r=rows.filter(function(x){return x.id===id})[0];return r&&String(dirty[id])!==String(r.done==null?'':r.done)});
+      if(!ids.length){updMsg='No changes to save.';msg.textContent=updMsg;return}
+      if(ids.some(function(id){return dirty[id]!==''&&isNaN(Number(dirty[id]))})){updMsg='Some values are not numbers.';msg.textContent=updMsg;return}
+      b.disabled=true;
+      try{
+        var bt=db.batch();
+        ids.forEach(function(id){bt.set(db.collection('entries').doc(id),{done:dirty[id]===''?null:Number(dirty[id]),doneAt:Date.now()},{merge:true})});
+        await bt.commit();dirty={};updMsg='Saved '+ids.length+' update'+(ids.length===1?'':'s')+'.';
+      }catch(e){updMsg='Could not save ('+(e.code||e.message)+').'}
+      msg.textContent=updMsg;b.disabled=false;
+    };
+    c.appendChild(b);c.appendChild(msg);box.appendChild(c);
+  }
+
+  function renderWhat(){
+    var o=$('whatOut');if(!o||!AN)return;
+    o.textContent='';
+    var gs=AN.gs,T=AN.T;
+    var A=gs.filter(function(g){return g.key===sc.plant})[0];if(!A)return;
+    var days=parseFloat(sc.days)||0,tons=parseFloat(sc.tons)||0;
+    if(!days&&!tons){o.appendChild(el('div','n','Enter days down and/or tons lost to see the impact.'));return}
+    var lost=days*A.base+tons,newGap=A.gap+lost,extra=Math.max(newGap,0);
+    var tp=0,tj=0;gs.forEach(function(g){tp+=g.plan;tj+=g.proj});
+    var lines=[
+      A.plant+' loses about '+fmt(lost)+' t'+(days?' ('+days+' day'+(days===1?'':'s')+' × '+fmt(A.base)+' t/day'+(tons?' + '+fmt(tons)+' t':'')+')':'')+'.',
+      'Its projected finish moves from '+fmt(A.proj)+' t to '+fmt(Math.max(A.proj-lost,0))+' t against a plan of '+fmt(A.plan)+' t.',
+      'Overall, the month is projected at '+fmt(Math.max(tj-lost,0))+' t against a plan of '+fmt(tp)+' t, before any recovery.'
+    ];
+    if(days>T.left)lines.push('Note: only '+T.left+' day'+(T.left===1?'':'s')+' left this month.');
+    lines.forEach(function(t){var d=el('div',null,t);d.style.marginTop='6px';o.appendChild(d)});
+    var r=el('div');r.style.marginTop='10px';
+    if(extra<=0.5){r.appendChild(el('div','n','This is absorbed by '+A.plant+'’s own surplus, so no change is needed at other plants.'))}
+    else{
+      var h=el('div','h','Shortfall to recover: '+fmt(extra)+' t');r.appendChild(h);
+      var ex={};ex[A.key]=1;
+      r.appendChild(coverLines(absorb(gs.filter(function(g){return g.cat===A.cat}),ex,extra,T),T));
+    }
+    o.appendChild(r);
+  }
+
+  function renderAna(){
+    if(tab!=='ana')return;
+    var box=$('v-ana');box.textContent='';
+    var m=$('mf').value,T=tInfo(m);
+    var cur=rows.filter(function(r){return r.month===m});
+    if(!cur.length){var e0=el('div','card');e0.appendChild(el('div','empty','No entries for this month yet.'));box.appendChild(e0);return}
+    var gs=grp(cur,T);AN={gs:gs,T:T};
+    var plan=0,done=0,proj=0;gs.forEach(function(g){plan+=g.plan;done+=g.done;proj+=g.proj});
+    var gap=plan-proj,rem=Math.max(plan-done,0);
+
+    var c=el('div','card');
+    c.appendChild(el('div','h',T.pass===0?'Month not started · '+T.D+' days':(T.left===0?'Month finished':'Day '+T.pass+' of '+T.D+' · '+T.left+' day'+(T.left===1?'':'s')+' left')));
+    if(done===0&&T.pass>0)c.appendChild(el('div','n err','No production figures yet. Open the Update tab and enter produced tons to see run-rates and projections.'));
+    var l1=el('div','n','Time elapsed '+Math.round(T.pass/T.D*100)+'%');l1.style.marginTop='10px';c.appendChild(l1);c.appendChild(bar(T.pass/T.D*100));
+    var l2=el('div','n','Produced '+Math.round(plan?done/plan*100:0)+'% of plan');l2.style.marginTop='6px';c.appendChild(l2);c.appendChild(bar(plan?done/plan*100:0));
+    var gr=el('div','grid');gr.style.marginTop='12px';
+    gr.appendChild(stat('Plan (t)',fmt(plan)));
+    gr.appendChild(stat('Produced (t)',fmt(done)));
+    gr.appendChild(stat('Remaining (t)',fmt(rem)));
+    gr.appendChild(stat('Projected finish (t)',fmt(proj)));
+    gr.appendChild(stat(gap>0.5?'Short by (t)':'Ahead by (t)',fmt(Math.abs(gap)),gap>0.5?'err':'pos'));
+    gr.appendChild(stat('Needed per day (t)',T.left>0?fmt(rem/T.left):'–'));
+    c.appendChild(gr);box.appendChild(c);
+
+    var pc=el('div','card');pc.appendChild(el('div','h','By plant'));
+    gs.slice().sort(function(a,b){return b.gap-a.gap}).forEach(function(g){
+      var st=g.rem<=0?['Done','']:(T.pass===0?['Not started','']:(g.gap>0.5?['Behind','bad']:['On track','']));
+      var d=el('div','pl'),h=el('div','tot2');
+      h.appendChild(el('span',null,g.plant+' · '+g.cat));h.appendChild(el('span','chip '+st[1],st[0]));
+      d.appendChild(h);
+      d.appendChild(el('div','n','Plan '+fmt(g.plan)+' · Done '+fmt(g.done)+' · Left '+fmt(g.rem)+' t'));
+      d.appendChild(bar(g.plan?g.done/g.plan*100:0));
+      d.appendChild(el('div','n','Running '+fmt(g.rate)+' t/day · Needs '+(isFinite(g.req)?fmt(g.req):'–')+' t/day · Projected '+fmt(g.proj)+' t'+(g.gap>0.5&&g.rem>0?' · Short '+fmt(g.gap)+' t':(g.gap<-0.5?' · Ahead '+fmt(-g.gap)+' t':''))));
+      pc.appendChild(d);
+    });
+    box.appendChild(pc);
+
+    var cv=el('div','card');cv.appendChild(el('div','h','Catch-up: who covers the gap'));
+    ['Biscuit','Rusk'].forEach(function(cat){
+      var cg=gs.filter(function(g){return g.cat===cat});if(!cg.length)return;
+      var behind=cg.filter(function(g){return g.gap>0.5&&g.rem>0});
+      var s=el('div');s.style.marginTop='8px';
+      if(!behind.length){s.appendChild(el('div','n',cat+': all plants on track.'));cv.appendChild(s);return}
+      var S=behind.reduce(function(a,g){return a+g.gap},0),ex={};behind.forEach(function(g){ex[g.key]=1});
+      s.appendChild(el('div',null,cat+': '+behind.map(function(g){return g.plant}).join(', ')+' will miss '+fmt(S)+' t at the current pace. To cover it:'));
+      s.appendChild(coverLines(absorb(cg,ex,S,T),T));
+      cv.appendChild(s);
+    });
+    box.appendChild(cv);
+
+    var wf=el('div','card');wf.appendChild(el('div','h','What if a plant loses capacity?'));
+    var sel=document.createElement('select');
+    gs.forEach(function(g){var o=el('option',null,g.plant+' ('+g.cat+')');o.value=g.key;sel.appendChild(o)});
+    if(!gs.some(function(g){return g.key===sc.plant}))sc.plant=gs[0].key;
+    sel.value=sc.plant;sel.onchange=function(){sc.plant=sel.value;renderWhat()};
+    var dy=document.createElement('input');dy.type='number';dy.min='0';dy.inputMode='decimal';dy.value=sc.days;dy.oninput=function(){sc.days=dy.value;renderWhat()};
+    var tn=document.createElement('input');tn.type='number';tn.min='0';tn.inputMode='decimal';tn.value=sc.tons;tn.oninput=function(){sc.tons=tn.value;renderWhat()};
+    function fld(l,i){var d=el('div');d.appendChild(el('label',null,l));d.appendChild(i);return d}
+    wf.appendChild(fld('Plant',sel));
+    var rw=el('div','row');rw.appendChild(fld('Days down',dy));rw.appendChild(fld('Or tons lost',tn));wf.appendChild(rw);
+    var wo=el('div');wo.id='whatOut';wo.style.marginTop='12px';wf.appendChild(wo);
+    box.appendChild(wf);renderWhat();
+
+    var rk=cur.map(function(r){var dn=r.done||0,rt=T.pass>0?dn/T.pass:0;return {r:r,gap:r.value-(dn+rt*T.left),rem:Math.max(r.value-dn,0),rt:rt}})
+      .filter(function(x){return x.gap>0.5&&x.rem>0}).sort(function(a,b){return b.gap-a.gap}).slice(0,8);
+    var rc=el('div','card');rc.appendChild(el('div','h','Products at risk'));
+    if(!rk.length)rc.appendChild(el('div','n','No product is behind pace.'));
+    rk.forEach(function(x){
+      var d=el('div','pl');d.appendChild(el('div',null,x.r.item||'(no name)'));
+      d.appendChild(el('div','n',(x.r.plant||'')+' · short '+fmt(x.gap)+' t · needs '+(T.left>0?fmt(x.rem/T.left):'–')+' t/day, running '+fmt(x.rt)+' t/day'));
+      rc.appendChild(d);
+    });
+    box.appendChild(rc);
+    box.appendChild(el('div','n','Projections assume each plant keeps its current daily pace, counting every calendar day, and that production figures are up to today. All figures are in tons as entered.'));
+  }
+  function render(){renderData();renderUpd();renderAna()}
 
   // ---- Excel import ----
   function normPlant(s){var t=String(s).trim(),l=t.toLowerCase();if(l==='sl')return 'Straightline';if(l==='swg')return 'SWG';return t.replace(/\w\S*/g,function(w){return w[0].toUpperCase()+w.slice(1).toLowerCase()})}
@@ -262,7 +468,7 @@ var FIREBASE_CONFIG = {
       var batch=db.batch();
       p.rows.forEach(function(x){
         var d=Object.assign({month:p.month,note:'',ts:Date.now()},x);
-        batch.set(db.collection('entries').doc(slug(p.month+'_'+d.plant+'_'+d.item)),d);
+        batch.set(db.collection('entries').doc(slug(p.month+'_'+d.plant+'_'+d.item)),d,{merge:true});
       });
       await batch.commit();
       $('mf').value=p.month;$('file').value='';pending=null;
