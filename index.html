@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6f5c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Monthly Data">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Monthly Data</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--tx:#1d1d1b;--mu:#6b6a64;--ac:#1f6f5c;--ac2:#e3f1ed;--bd:#e2e0d8;--dg:#b3261e;--bt:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#171715;--card:#222220;--tx:#f0efe9;--mu:#a09f97;--ac:#58c2a8;--ac2:#1f332d;--bd:#363632;--dg:#f2918a;--bt:#10231d;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:600px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--mu);font-size:13px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mu);margin-right:6px}
+.dot.on{background:var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:12px;color:var(--mu);margin:8px 0 3px}
+input,select{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+button{font:inherit;border:0;border-radius:10px;padding:11px 14px;background:var(--ac);color:var(--bt);cursor:pointer}
+button.g{background:var(--ac2);color:var(--ac)}
+button.d{background:transparent;color:var(--dg);padding:6px 8px}
+button.l{background:transparent;color:var(--ac);padding:6px 8px}
+.tot{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;color:var(--mu)}
+.tot b{font-size:26px;color:var(--tx)}
+.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--bd)}
+.item:first-child{border-top:0}
+.n{color:var(--mu);font-size:12px}
+.v{font-weight:600;white-space:nowrap}
+.empty{color:var(--mu);text-align:center;padding:18px 0;font-size:14px}
+.err{color:var(--dg)}
+summary{cursor:pointer;font-weight:600}
+#login{max-width:380px;margin:12vh auto 0}
+</style>
+</head>
+<body>
+<main>
+  <div id="login" class="card" style="display:none">
+    <h1>Monthly Data</h1>
+    <div class="n">Sign in with the team account.</div>
+    <label for="em">Email</label><input id="em" type="email" autocomplete="username">
+    <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+    <div id="lerr" class="n err" style="margin:8px 0"></div>
+    <button id="lgo" style="width:100%">Sign in</button>
+  </div>
+
+  <div id="app" style="display:none">
+    <h1>Monthly Data</h1>
+    <div class="sub"><span><span class="dot" id="dot"></span><span id="status">Connecting…</span></span><button class="l" id="out">Sign out</button></div>
+
+    <div class="card">
+      <div class="row">
+        <div><label for="mf">Month</label><input type="month" id="mf"></div>
+        <div><label for="pf">Plant</label><select id="pf"><option value="">All plants</option></select></div>
+      </div>
+      <div class="tot"><span>Total (as entered)</span><b id="total">0</b></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600">Import monthly Excel</div>
+      <div class="n" style="margin:2px 0 8px">Upload the unit-wise plan file each month. Importing the same month again updates entries instead of duplicating them.</div>
+      <input type="file" id="file" accept=".xlsx,.xls">
+      <div id="impMsg" class="n" style="margin-top:8px"></div>
+      <button id="impGo" style="display:none;margin-top:8px">Import</button>
+    </div>
+
+    <details class="card" id="formCard">
+      <summary id="formTitle">Add entry manually</summary>
+      <label for="item">Item / product</label>
+      <input id="item" autocomplete="off">
+      <div class="row">
+        <div><label for="plant">Plant</label><input id="plant" list="plants" autocomplete="off"></div>
+        <div><label for="val">Value</label><input id="val" type="number" step="any" inputmode="decimal"></div>
+        <div><label for="unit">Unit</label><input id="unit" value="tons"></div>
+      </div>
+      <div class="row">
+        <div><label for="cbb">CBB (optional)</label><input id="cbb" type="number" step="any" inputmode="decimal"></div>
+        <div><label for="cost">Cost ₹/kg (optional)</label><input id="cost" type="number" step="any" inputmode="decimal"></div>
+      </div>
+      <label for="note">Note (optional)</label>
+      <input id="note" autocomplete="off">
+      <datalist id="plants"></datalist>
+      <div class="row" style="margin-top:12px">
+        <button id="save">Save</button>
+        <button class="g" id="cancel" style="display:none">Cancel</button>
+      </div>
+    </details>
+
+    <div class="card"><div id="list"></div></div>
+  </div>
+</main>
+
+<script>
+// ====== SETUP: paste your Firebase web app config here (Firebase console > Project settings > Your apps) ======
+var FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyD9dOQysRg3QpS2rPP0WVnM5QQECiMyVEg',
+  authDomain: 'monthly-data-98735.firebaseapp.com',
+  projectId: 'monthly-data-98735',
+  storageBucket: 'monthly-data-98735.firebasestorage.app',
+  messagingSenderId: '927776435302',
+  appId: '1:927776435302:web:a5c1b186430313aa32d1a7'
+};
+// ===========================================================================================================
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var rows=[],editId=null,pending=null,first=true,db=null,unsub=null;
+  var MON=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  var now=new Date();
+  $('mf').value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+
+  function setStatus(t,on){$('status').textContent=t;$('dot').className='dot'+(on?' on':'')}
+  function fmt(n){return Number(n).toLocaleString('en-IN',{maximumFractionDigits:2})}
+  function slug(s){return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,180)}
+  function num(x){return typeof x==='number'&&isFinite(x)}
+  function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+  function opt(n){return n===''||n==null||isNaN(Number(n))?null:Number(n)}
+
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(function(){})}
+
+  if(FIREBASE_CONFIG.apiKey.indexOf('PASTE')===0){
+    $('login').style.display='';$('lgo').style.display='none';$('em').style.display='none';$('pw').style.display='none';
+    $('lerr').textContent='Setup needed: add your Firebase config in index.html.';return;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db=firebase.firestore();
+  db.enablePersistence({synchronizeTabs:true}).catch(function(){});
+  var auth=firebase.auth();
+
+  $('lgo').onclick=function(){
+    $('lerr').textContent='';
+    auth.signInWithEmailAndPassword($('em').value.trim(),$('pw').value).catch(function(){$('lerr').textContent='Wrong email or password.'});
+  };
+  $('pw').onkeydown=function(e){if(e.key==='Enter')$('lgo').click()};
+  $('out').onclick=function(){auth.signOut()};
+
+  auth.onAuthStateChanged(function(u){
+    if(!u){
+      if(unsub){unsub();unsub=null}rows=[];first=true;
+      $('app').style.display='none';$('login').style.display='';return;
+    }
+    $('login').style.display='none';$('app').style.display='';
+    if(unsub)unsub();
+    unsub=db.collection('entries').onSnapshot(function(snap){
+      rows=snap.docs.map(function(d){var o=d.data();o.id=d.id;o.value=Number(o.value)||0;return o});
+      if(first&&rows.length){first=false;var ms=rows.map(function(r){return r.month}).sort();$('mf').value=ms[ms.length-1]}
+      setStatus(snap.metadata.fromCache?'Offline · changes will sync when online':'Live · syncing instantly',!snap.metadata.fromCache);
+      render();
+    },function(e){setStatus('Sync error ('+e.code+')',false)});
+  });
+
+  function render(){
+    var m=$('mf').value;
+    var pl={};rows.forEach(function(r){if(r.plant)pl[r.plant]=1});
+    var sel=$('pf'),keep=sel.value;
+    sel.textContent='';var o=el('option',null,'All plants');o.value='';sel.appendChild(o);
+    Object.keys(pl).sort().forEach(function(x){var q=el('option',null,x);q.value=x;sel.appendChild(q)});
+    sel.value=pl[keep]?keep:'';var p=sel.value;
+    var dl=$('plants');dl.textContent='';Object.keys(pl).forEach(function(x){var q=el('option');q.value=x;dl.appendChild(q)});
+
+    var cur=rows.filter(function(r){return r.month===m&&(!p||r.plant===p)}).sort(function(a,b){return (a.plant||'').localeCompare(b.plant||'')||(a.item||'').localeCompare(b.item||'')});
+    $('total').textContent=fmt(cur.reduce(function(s,r){return s+r.value},0));
+    var L=$('list');L.textContent='';
+    if(!cur.length){L.appendChild(el('div','empty','No entries for this selection.'));return}
+    cur.forEach(function(r){
+      var d=el('div','item'),a=el('div');
+      a.appendChild(el('div',null,r.item||'(no name)'));
+      var bits=[];if(r.plant)bits.push(r.plant);if(r.cbb!=null)bits.push('CBB '+fmt(r.cbb));if(r.cost!=null)bits.push('₹'+fmt(r.cost)+'/kg');if(r.note)bits.push(r.note);
+      if(bits.length)a.appendChild(el('div','n',bits.join(' · ')));
+      var b=el('div');b.style.textAlign='right';
+      b.appendChild(el('div','v',fmt(r.value)+(r.unit?' '+r.unit:'')));
+      var ed=el('button','l','Edit');ed.onclick=function(){startEdit(r)};
+      var de=el('button','d','Delete');de.onclick=function(){remove(r)};
+      b.appendChild(ed);b.appendChild(de);
+      d.appendChild(a);d.appendChild(b);L.appendChild(d);
+    });
+  }
+
+  function startEdit(r){
+    editId=r.id;
+    $('item').value=r.item||'';$('plant').value=r.plant||'';$('val').value=r.value;$('unit').value=r.unit||'';
+    $('cbb').value=r.cbb==null?'':r.cbb;$('cost').value=r.cost==null?'':r.cost;$('note').value=r.note||'';
+    $('formTitle').textContent='Edit entry';$('cancel').style.display='';
+    $('formCard').open=true;$('formCard').scrollIntoView({behavior:'smooth'});
+  }
+  function reset(){
+    editId=null;['item','plant','val','cbb','cost','note'].forEach(function(i){$(i).value=''});$('unit').value='tons';
+    $('formTitle').textContent='Add entry manually';$('cancel').style.display='none';
+  }
+  $('cancel').onclick=reset;
+  $('mf').onchange=render;$('pf').onchange=render;
+
+  $('save').onclick=function(){
+    var item=$('item').value.trim(),val=parseFloat($('val').value);
+    if(!item||isNaN(val)){alert('Please enter an item and a value.');return}
+    var d={month:$('mf').value,item:item,plant:$('plant').value.trim(),value:val,unit:$('unit').value.trim(),cbb:opt($('cbb').value),cost:opt($('cost').value),note:$('note').value.trim(),ts:Date.now()};
+    var id=editId||slug(d.month+'_'+(d.plant||'na')+'_'+item);
+    db.collection('entries').doc(id).set(d).catch(function(e){alert('Could not save ('+e.code+').')});
+    reset();
+  };
+  function remove(r){
+    if(!confirm('Delete "'+(r.item||'entry')+'"?'))return;
+    db.collection('entries').doc(r.id).delete().catch(function(e){alert('Could not delete ('+e.code+').')});
+  }
+
+  // ---- Excel import ----
+  function normPlant(s){var t=String(s).trim(),l=t.toLowerCase();if(l==='sl')return 'Straightline';if(l==='swg')return 'SWG';return t.replace(/\w\S*/g,function(w){return w[0].toUpperCase()+w.slice(1).toLowerCase()})}
+  function parseBook(wb){
+    var name=wb.SheetNames.filter(function(n){return /month|unit/i.test(n)})[0]||wb.SheetNames[0];
+    var R=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,raw:true});
+    var h=-1;for(var i=0;i<R.length;i++){if(R[i][0]&&/product/i.test(String(R[i][0]))){h=i;break}}
+    if(h<0)throw new Error('Could not find the "Product Name" header row.');
+    var month=null,mm=String(R[h][1]||'').match(/([A-Za-z]{3})[A-Za-z]*\W*(\d{2,4})/);
+    if(mm){var mi=MON.indexOf(mm[1].toLowerCase());if(mi>=0){var y=+mm[2];if(y<100)y+=2000;month=y+'-'+String(mi+1).padStart(2,'0')}}
+    var pc=[];for(var c=4;c<10;c++){if(typeof R[h][c]==='string'&&R[h][c].trim())pc.push([c,normPlant(R[h][c])])}
+    var cc=[];if(h>0){for(var c2=4;c2<R[h-1].length;c2++){if(typeof R[h-1][c2]==='string'&&R[h-1][c2].trim())cc.push(c2)}}
+    var out=[];
+    for(var r=h+1;r<R.length;r++){
+      var row=R[r],a=row[0];
+      if(!a){var ps=[];for(var k2=4;k2<10;k2++)if(typeof row[k2]==='string'&&row[k2].trim())ps.push([k2,normPlant(row[k2])]);if(ps.length){pc=ps;cc=[]}continue}
+      if(typeof a!=='string')continue;
+      var t=row[2],cbb=row[1];
+      pc.forEach(function(p,k){
+        var v=row[p[0]];if(!num(v)||!v)return;
+        var d={plant:p[1],item:a.trim(),value:v,unit:'tons',cbb:null,cost:null};
+        if(num(cbb)&&num(t)&&t)d.cbb=Math.round(cbb*v/t);
+        if(cc[k]!=null&&num(row[cc[k]]))d.cost=row[cc[k]];
+        out.push(d);
+      });
+    }
+    return {month:month,rows:out,sheet:name};
+  }
+  $('file').onchange=function(ev){
+    var f=ev.target.files[0];pending=null;$('impGo').style.display='none';$('impMsg').className='n';
+    if(!f)return;
+    if(typeof XLSX==='undefined'){$('impMsg').className='n err';$('impMsg').textContent='Excel reader failed to load. Check your connection.';return}
+    var rd=new FileReader();
+    rd.onload=function(){
+      try{
+        var res=parseBook(XLSX.read(rd.result,{type:'array'}));
+        if(!res.rows.length)throw new Error('No plan rows found.');
+        res.month=res.month||$('mf').value;pending=res;
+        $('impMsg').textContent='Sheet "'+res.sheet+'": '+res.rows.length+' entries for '+res.month+'.';
+        $('impGo').style.display='';
+      }catch(e){$('impMsg').className='n err';$('impMsg').textContent=e.message}
+    };
+    rd.readAsArrayBuffer(f);
+  };
+  $('impGo').onclick=async function(){
+    if(!pending)return;
+    var p=pending;$('impGo').style.display='none';$('impMsg').textContent='Importing…';
+    try{
+      var batch=db.batch();
+      p.rows.forEach(function(x){
+        var d=Object.assign({month:p.month,note:'',ts:Date.now()},x);
+        batch.set(db.collection('entries').doc(slug(p.month+'_'+d.plant+'_'+d.item)),d);
+      });
+      await batch.commit();
+      $('mf').value=p.month;$('file').value='';pending=null;
+      $('impMsg').textContent='Imported '+p.rows.length+' entries for '+p.month+'.';
+    }catch(e){$('impMsg').className='n err';$('impMsg').textContent='Import failed ('+(e.code||e.message)+').'}
+  };
+})();
+</script>
+</body>
+</html>
